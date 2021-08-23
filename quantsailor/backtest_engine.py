@@ -5,13 +5,13 @@ import sqlite3
 import time
 import multiprocessing
 from itertools import product
+import matplotlib.pyplot as plt
 
 def timeis(func):  
     def wrap(*args, **kwargs):
         start = time.time()
         result = func(*args, **kwargs)
         end = time.time()
-          
         print('[{}] is executed in {:.2f} seconds'.format(func.__name__, end-start))
         return result
     return wrap
@@ -29,10 +29,10 @@ def divide_by_ticker(df, pool):
     
 
 class BacktestEngine():
-    def __init__(self, db_name=None, num_process=4, is_local=False):
+    def __init__(self, db_name=None, num_process=4):
         self.db = db_name
         self.cache = {}
-        self.initialize(num_process, is_local)
+        self.initialize(num_process)
         
     @timeis
     def initialize(self, num_process):
@@ -171,10 +171,11 @@ class BacktestEngine():
                 universe_list = list(set(universe_list)-set(self.delisted_tickers))
                 self.delisted_tickers = []
                 target_weight = self.compute_target(date, universe_list, strategy)
-                
+
+        ETA = time.time()-start_T   
         print('===','date:{}'.format(date),'/',
                       'total_asset:{:.3f}'.format(sum(self.asset[date].values())),'/',
-                      'time elapsed:{:.1f}'.format(end_T-start_T),'===')
+                      'time elapsed:{:.1f}'.format(ETA),'===')
                       
         self.asset_df = pd.DataFrame(self.asset).T.fillna(0).iloc[1:]
         self.transaction_df = pd.DataFrame(self.transaction).T.fillna(0)
@@ -237,7 +238,6 @@ class BacktestEngine():
 
             elif transaction <= 0:
                 sell_qty = transaction / ticker_price
-                self.realized_pnl += -sell_qty * (ticker_price - avgprice)
                 if ticker in target_asset.keys():
                     updated_qty[ticker] = qty + sell_qty
                     updated_avgprice[ticker] = avgprice
@@ -326,3 +326,96 @@ class BacktestEngine():
         target_weight = strategy.compute_target(universe_list)
 
         return target_weight
+
+    def show_report(self, benchmark='^SP500TR'):
+        dates = self.asset_df.index
+        asset = self.asset_df.sum(axis=1)
+        if benchmark is not None:
+            bench = self.cache['index'][benchmark].closeadj.loc[dates]
+            bench = bench/bench.iloc[0]\
+
+        stat_df = self.stat(benchmark)
+
+        fig, axs = plt.subplots(1, 2, gridspec_kw={'width_ratios': [2, 1]},figsize=(12,5))
+        
+        ax1 = axs[0]
+        if benchmark is not None:
+            ax1.plot(bench)
+            ax1.plot(asset)
+            ax1.legend(['Benchmark', 'Strategy'])
+        else:
+            ax1.plot(asset)
+            ax1.legend(['Strategy'])
+        
+        ax2 = axs[1]
+        ax2.axis('off')
+        table = ax2.table(cellText=stat_df.values, rowLabels = stat_df.index, 
+                            colLabels=stat_df.columns, bbox=[0,0,1,1])
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+
+        fig.autofmt_xdate()
+
+    def stat(self, benchmark = '^SP500TR'):
+        def _max_underwater(asset):
+            ser = (asset - asset.cummax())
+            underwater_periods = []
+            days = 0
+            for item in ser:
+                if item < 0:
+                    days += 1
+                else:
+                    underwater_periods = underwater_periods+[days]
+                    days=0
+            return np.max(underwater_periods)
+            
+        asset = self.asset_df.sum(axis=1)
+        dates = asset.index
+
+        rets = asset.apply(np.log).diff().dropna()
+        cagr = 252*np.mean(rets)
+        vol = np.sqrt(252)*np.std(rets)
+        sharpe = np.sqrt(252)*np.mean(rets)/np.std(rets)
+        IR = 0
+        mdd = (asset - asset.cummax()).min()
+        mup = _max_underwater(asset)
+
+        if benchmark is not None:
+            bench = self.cache['index'][benchmark].closeadj.loc[dates]
+            bench = bench/bench.iloc[0]
+            bench_rets = bench.apply(np.log).diff().dropna()
+            excess_rets = rets - bench_rets
+            IR = np.sqrt(252)*np.mean(excess_rets)/np.std(excess_rets)
+
+            cagr_b = 252*np.mean(bench_rets)
+            vol_b = np.sqrt(252)*np.std(bench_rets)
+            sharpe_b = np.sqrt(252)*np.mean(bench_rets)/np.std(bench_rets)
+            IR_b = 0
+            mdd_b = (bench - bench.cummax()).min()
+            mup_b = _max_underwater(bench)
+
+            stat_b = {'CAGR':'{:.3f}'.format(cagr_b), 
+                'Vol':'{:.3f}'.format(vol_b), 
+                'SR':'{:.3f}'.format(sharpe_b), 
+                'IR':'{:.3f}'.format(IR_b), 
+                'MDD':'{:.3f}'.format(mdd_b), 
+                'MUP':'{} days'.format(mup_b)}
+        
+        stat = {'CAGR':'{:.3f}'.format(cagr), 
+                'Vol':'{:.3f}'.format(vol), 
+                'SR':'{:.3f}'.format(sharpe), 
+                'IR':'{:.3f}'.format(IR), 
+                'MDD':'{:.3f}'.format(mdd), 
+                'MUP':'{} days'.format(mup)}
+
+        stat_df = pd.Series(stat).to_frame()
+        stat_df.columns = ['Strategy']
+
+        if benchmark is not None:
+            stat_df_b = pd.Series(stat_b).to_frame()
+            stat_df = pd.concat([stat_df, stat_df_b], axis=1)
+            stat_df.columns = ['Strategy', 'Benchmark']
+
+        
+        return stat_df
+    

@@ -54,7 +54,7 @@ class DataLoader():
         else:
             db_name = DB_PATH+'/'+db_name
 
-        self.save_db(db_name, is_update, is_local)
+        self.save_db(db_name, is_update)
 
     @timeis
     def update_data(self, sdate, edate, size, fred_key, quandl_key, fred_list, yfinance_listt):
@@ -76,7 +76,7 @@ class DataLoader():
     def update_universe(self, sdate, edate, size):
         date_list = mcal.get_calendar('NYSE').valid_days(start_date=sdate, end_date=edate)
 
-        monthly_date_list = [date_list[0]]
+        monthly_date_list = [date_list[0].strftime('%Y-%m-%d')]
         for idx in range(len(date_list)-1):
             today, tomorrow = date_list[idx], date_list[idx+1]
             if today.month != tomorrow.month:
