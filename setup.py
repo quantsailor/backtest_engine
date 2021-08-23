@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(
-    name = 'backtest_engine',
+    name = 'quantsailor',
     version = '0.0.1',
     author = "quantsailor",
     email = "quantsailor@gmail.com",
