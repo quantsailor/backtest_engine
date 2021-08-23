@@ -1,3 +1,3 @@
-import dataloader
-import backtest_engine
-import strategy
+from .dataloader import *
+from .backtest_engine import *
+from .strategy import *

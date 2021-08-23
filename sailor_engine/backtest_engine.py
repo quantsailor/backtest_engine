@@ -16,7 +16,6 @@ def timeis(func):
         return result
     return wrap
 
-
 def query_df(df, ticker):
     return df[df.ticker.values == ticker]
            
