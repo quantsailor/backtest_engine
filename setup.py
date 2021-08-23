@@ -6,6 +6,6 @@ setup(
     author = "quantsailor",
     email = "quantsailor@gmail.com",
     license = "GPL",
-    packages = ['backtest_engine'],
+    packages = ['quantsailor'],
     py_modules = ['backtest_engine, dataloader, strategy']
 )
