@@ -17,13 +17,12 @@ def timeis(func):
         return result
     return wrap
 
-
+DOWNLOAD_PATH = './data'
+DB_PATH = './DB'
 class DataLoader():
     def __init__(self, fred_key=None, quandl_key=None, fred_list=[], yfinance_list=[],
         sdate=None, edate=None, size=100, db_name=None, is_update=False):
-
-        DOWNLOAD_PATH = './data'
-        DB_PATH = './DB'
+        
         try:
             os.mkdir(DOWNLOAD_PATH)
         except:
