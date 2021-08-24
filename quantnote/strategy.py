@@ -30,48 +30,10 @@ class Strategy():
             pe = self.get_value(ticker,'metric','pe')
             return 1/pe
         
-        elif ftype == 'momentum':
-            p_1M = self.get_value(ticker,'metric','closeadj',20)
-            p_6M = self.get_value(ticker,'metric','closeadj',120)
-            return np.log(p_1M/p_6M)
-        
-        elif ftype == 'mean_reversion':
-            p_now = self.get_value(ticker,'metric','closeadj')
-            p_1M = self.get_value(ticker,'metric','closeadj',1)
-            return np.log(p_1M/p_now)
-        
         elif ftype == 'EPSG/PE':
             pe = self.get_value(ticker,'metric','pe')
             eps_growth = np.log(self.get_value(ticker,'fundamentals','eps')/self.get_value(ticker,'fundamentals','eps',1))
             return eps_growth/pe
-        
-        elif ftype == 'inv_vol':
-            vol = self.get_value_list(ticker,'fundamentals','closeadj', 120).apply(np.log).diff().std()
-            return 1/vol
-        
-        elif ftype == 'CAPM_alpha':
-            market_returns = self.get_value_list('S&P500','index','closeadj',120).apply(np.log).diff()[1:]
-            market_returns = np.array(market_returns).reshape(-1,1)
-            stock_returns = self.get_value_list(ticker,'market','closeadj',120).apply(np.log).diff()[1:]
-            regr = linear_model.LinearRegression()
-            regr.fit(market_returns, stock_returns)
-            beta, alpha = regr.coef_[0], regr.intercept_
-            return alpha
-
-        elif ftype == 'CAPM_return':
-            market_returns_full = self.get_value_list('S&P500','index','closeadj').apply(np.log).diff().resampel('M').mean().shift()
-            stock_returns = self.get_value_list(ticker,'market','closeadj').apply(np.log).diff().resampel('M').mean()
-
-            market_returns = market_returns_full.loc[stock_returns.index]
-            market_returns = np.array(market_returns).reshape(-1,1)
-
-            regr = linear_model.LinearRegression()
-            regr.fit(market_returns, stock_returns)
-            beta, alpha = regr.coef_[0], regr.intercept_
-
-            prediction = alpha + beta*market_returns_full.iloc[-1]
-
-            return prediction
         
         elif ftype == 'F-score':
             ROA = self.get_value(ticker,'fundamentals','roa')
@@ -144,7 +106,7 @@ class Strategy():
         assert np.abs(sum(target_weight.values())-1) < 1e-6
         return target_weight
     
-    def get_value(self, ticker, table, value, lag=0):
+    def get_value(self, table, ticker, value, lag=0):
         try:
             if table == 'tickerinfo':
                 x = self.cache[table][ticker][value].iloc[0]

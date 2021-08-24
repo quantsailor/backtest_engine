@@ -61,39 +61,35 @@ class BacktestEngine():
             df.index = pd.to_datetime(df.index)
             metric_df = df.copy().sort_index()
 
-            msg = 'SELECT * FROM market'
-            df = pd.read_sql(msg,db).set_index('date')
-            df.index = pd.to_datetime(df.index)
-            market_df = df.copy().sort_index()
         except:
             self.cache['universe'] = {}
             self.cache['ticker'] = {}
             self.cache['fundamentals'] = {}
             self.cache['metric'] = {}
-            self.cache['market'] = {}
             print('Quandl data does not exist')
 
         try:
             msg = 'SELECT * FROM macro'
             df = pd.read_sql(msg,db).set_index('datekey')
             df.index = pd.to_datetime(df.index)
+            df['value'] = pd.to_numeric(df['value'])
+            df['cdate'] = pd.to_datetime(df['cdate'])
             macro_df = df.copy().sort_index()
         except:
             self.cache['macro'] = {}
             print('FRED data does not exsit')
 
         
-        msg = 'SELECT * FROM indices'
+        msg = 'SELECT * FROM market'
         df = pd.read_sql(msg,db).set_index('date')
         df.index = pd.to_datetime(df.index)
-        index_df = df.copy().sort_index()
+        market_df = df.copy().sort_index()
 
         db.close
         etime = time.time()
         print('DB loaded in {:.2f} seconds'.format(etime-stime))
         
         pool = multiprocessing.Pool(num_process)
-        self.cache['index'] = divide_by_ticker(index_df, None)
 
         try:
             self.cache['macro'] = divide_by_ticker(macro_df, None)
@@ -113,8 +109,11 @@ class BacktestEngine():
         if self.custom_universe is not None:
             return self.custom_universe
         else:
-            last_date = self.cache['universe'].loc[:date].index[-1]
-            universe = list(set(self.cache['universe'].loc[last_date].ticker))
+            try:
+                last_date = self.cache['universe'].loc[:date].index[-1]
+                universe = list(set(self.cache['universe'].loc[last_date].ticker))
+            except:
+                universe = self.get_default_universe()
             return universe
 
     @timeis
@@ -259,9 +258,7 @@ class BacktestEngine():
             if ticker == 'cash':
                 ticker_price = 1 
             elif ticker in self.cache['market'].keys():
-                ticker_price = self.cache['market'][ticker].closeadj.loc[date]
-            elif ticker in self.cache['index'].keys():
-                ticker_price = self.cache['index'][ticker].closeadj.loc[date]
+                ticker_price = self.cache['market'][ticker].close.loc[date]
         except:
             assert False
         return ticker_price
@@ -270,9 +267,8 @@ class BacktestEngine():
         if ticker == 'cash':
             return 1
         try:
-            table = 'index' if ticker in self.cache['index'] else 'market'
-            curr_price = self.cache[table][ticker]['closeadj'].loc[date]
-            last_price = self.cache[table][ticker]['closeadj'].shift().loc[date]
+            curr_price = self.cache['market'][ticker]['close'].loc[date]
+            last_price = self.cache['market'][ticker]['close'].shift().loc[date]
             return curr_price/last_price
         except:
             if verbose: 
@@ -327,11 +323,11 @@ class BacktestEngine():
 
         return target_weight
 
-    def show_report(self, benchmark='^SP500TR'):
+    def show_report(self, benchmark='^SP500TR', filename='report.png'):
         dates = self.asset_df.index
         asset = self.asset_df.sum(axis=1)
         if benchmark is not None:
-            bench = self.cache['index'][benchmark].closeadj.loc[dates]
+            bench = self.cache['market'][benchmark].close.loc[dates]
             bench = bench/bench.iloc[0]\
 
         stat_df = self.stat(benchmark)
@@ -340,9 +336,9 @@ class BacktestEngine():
         
         ax1 = axs[0]
         if benchmark is not None:
-            ax1.plot(bench)
             ax1.plot(asset)
-            ax1.legend(['Benchmark', 'Strategy'])
+            ax1.plot(bench)
+            ax1.legend(['Strategy', 'Benchmark'])
         else:
             ax1.plot(asset)
             ax1.legend(['Strategy'])
@@ -355,6 +351,8 @@ class BacktestEngine():
         table.set_fontsize(10)
 
         fig.autofmt_xdate()
+        fig.show()
+        fig.savefig(filename)
 
     def stat(self, benchmark = '^SP500TR'):
         def _max_underwater(asset):
@@ -377,11 +375,11 @@ class BacktestEngine():
         vol = np.sqrt(252)*np.std(rets)
         sharpe = np.sqrt(252)*np.mean(rets)/np.std(rets)
         IR = 0
-        mdd = (asset - asset.cummax()).min()
+        mdd = asset.div(asset.cummax()).min()-1
         mup = _max_underwater(asset)
 
         if benchmark is not None:
-            bench = self.cache['index'][benchmark].closeadj.loc[dates]
+            bench = self.cache['market'][benchmark].close.loc[dates]
             bench = bench/bench.iloc[0]
             bench_rets = bench.apply(np.log).diff().dropna()
             excess_rets = rets - bench_rets
@@ -391,7 +389,7 @@ class BacktestEngine():
             vol_b = np.sqrt(252)*np.std(bench_rets)
             sharpe_b = np.sqrt(252)*np.mean(bench_rets)/np.std(bench_rets)
             IR_b = 0
-            mdd_b = (bench - bench.cummax()).min()
+            mdd_b = bench.div(bench.cummax()).min()-1
             mup_b = _max_underwater(bench)
 
             stat_b = {'CAGR':'{:.3f}'.format(cagr_b), 
@@ -419,3 +417,8 @@ class BacktestEngine():
         
         return stat_df
     
+
+    def get_default_universe(self):
+        sp500 = ['HPE', 'ICE', 'CLX', 'MAR', 'GOOGL', 'AJG', 'FTV', 'ANSS', 'INTU', 'SBUX', 'KMI', 'HAS', 'ALGN', 'F', 'NOV', 'BA', 'ECL', 'LB', 'ALK', 'RF', 'AIZ', 'CRM', 'TMO', 'XYL', 'ESS', 'CRK', 'AMD', 'MPC', 'A', 'AMCR', 'AMGN', 'JPM', 'VNO', 'T', 'VLO', 'HIG', 'PSX', 'PG', 'EBAY', 'CERN', 'ENPH', 'OXY', 'TPR', 'MSCI', 'EFX', 'NTAP', 'ANTM', 'CHRW', 'APTV', 'MU', 'BBY', 'UDR', 'JBHT', 'ARE', 'BK', 'DLTR', 'RTX', 'EXPD', 'REG', 'LOW', 'POOL', 'RE', 'HSY', 'GM', 'WMT', 'MAA', 'MCO', 'KIM', 'V', 'URI', 'MOS', 'IQV', 'D', 'LIN', 'FB', 'IP', 'PENN', 'CNC', 'PKG', 'CDW', 'FCX', 'NI', 'WDC', 'NKE', 'PNR', 'MRK', 'BEN', 'CAG', 'MCK', 'TSN', 'NEM', 'AZO', 'FOXA', 'HD', 'DAL', 'MTB', 'IVZ', 'VTR', 'LUV', 'DXCM', 'EQR', 'VRTX', 'CFG', 'MTD', 'IT', 'ADBE', 'TFC', 'FBHS', 'NSC', 'PH', 'TEL', 'HII', 'ISRG', 'NUE', 'CBRE', 'OGN', 'CE', 'PFG', 'KSU', 'MGM', 'CPRT', 'ROL', 'GIS', 'PEP', 'KHC', 'NFLX', 'RJF', 'HSIC', 'APD', 'AVGO', 'SNPS', 'FRT', 'FTNT', 'BMY', 'ROP', 'MRO', 'EL', 'LYB', 'VMC', 'CME', 'PEAK', 'XOM', 'UNP', 'CCL', 'ILMN', 'DGX', 'STX', 'TYL', 'AAL', 'ORCL', 'IEX', 'EXR', 'CCI', 'NWL', 'GOOG', 'QRVO', 'PYPL', 'CVS', 'GPN', 'FLT', 'BAC', 'CAT', 'COP', 'PLD', 'XRAY', 'DOV', 'SJM', 'TGT', 'COST', 'HCA', 'WYNN', 'MLM', 'RHI', 'NLOK', 'DHI', 'NOC', 'TRV', 'PHM', 'SRE', 'LDOS', 'PRGO', 'BSX', 'ALLE', 'AVY', 'ETR', 'WAB', 'BF.B', 'CTXS', 'EW', 'ETN', 'JCI', 'IR', 'TRMB', 'FDX', 'NDAQ', 'LW', 'FRC', 'UHS', 'EMR', 'ES', 'JNPR', 'COF', 'AES', 'ADI', 'LEG', 'BRK.B', 'APA', 'DLR', 'TDY', 'WU', 'MPWR', 'BKR', 'GWW', 'AMT', 'BKNG', 'PVH', 'TMUS', 'TSCO', 'VRSN', 'NEE', 'PPG', 'UNM', 'AKAM', 'NCLH', 'SCHW', 'HST', 'MA', 'MAS', 'HUM', 'HBAN', 'XLNX', 'NWSA', 'ALB', 'GS', 'PSA', 'LYV', 'AME', 'OTIS', 'BR', 'PPL', 'HON', 'CMG', 'AMAT', 'CNP', 'KO', 'MET', 'AIG', 'VIAC', 'AAPL', 'LKQ', 'DHR', 'HES', 'USB', 'CTL', 'XEL', 'CINF', 'COG', 'SYF', 'ZION', 'GILD', 'DVA', 'SWKS', 'CHD', 'HPQ', 'K', 'EXPE', 'PNC', 'EQIX', 'WST', 'ED', 'TJX', 'UPS', 'LVS', 'WHR', 'TER', 'GE', 'LRCX', 'WMB', 'LMT', 'ZBRA', 'RSG', 'HBI', 'MKTX', 'DRI', 'MMM', 'PCAR', 'GLW', 'DXC', 'CMI', 'INCY', 'NVR', 'ABC', 'AEP', 'WY', 'CDNS', 'CTVA', 'WRB', 'HLT', 'EOG', 'O', 'RMD', 'PM', 'DISH', 'WRK', 'SO', 'VZ', 'AAP', 'UA', 'COO', 'ATO', 'NOW', 'BDX', 'DIS', 'NTRS', 'GRMN', 'GNRC', 'DOW', 'PNW', 'MCHP', 'KEY', 'STZ', 'PWR', 'INTC', 'DISCA', 'WLTW', 'SNA', 'FE', 'AVB', 'ORLY', 'SWK', 'LEN', 'PTC', 'MHK', 'JKHY', 'VFC', 'SBAC', 'IFF', 'LLY', 'CMA', 'BXP', 'KMB', 'NVDA', 'CVX', 'CL', 'LNT', 'TFX', 'CARR', 'ITW', 'ODFL', 'OKE', 'PEG', 'KLAC', 'FMC', 'MDT', 'ROK', 'SLB', 'HRL', 'ETSY', 'AEE', 'PBCT', 'ABBV', 'RCL', 'SPGI', 'PAYX', 'DE', 'EVRG', 'AON', 'CTAS', 'SYY', 'SPG', 'NRG', 'BWA', 'NLSN', 'BLL', 'MCD', 'PFE', 'HWM', 'MYL', 'BLK', 'FOX', 'CZR', 'TT', 'STT', 'SIVB', 'APH', 'TDG', 'ABT', 'WAT', 'ADM', 'IPG', 'CMCSA', 'MKC', 'CI', 'MMC', 'AMZN', 'VRSK', 'DTE', 'YUM', 'OMC', 'CMS', 'CB', 'ALL', 'FAST', 'ROST', 'BIO', 'CAH', 'DFS', 'J', 'ACN', 'UAL', 'QCOM', 'MO', 'CPB', 'EMN', 'DISCK', 'CSCO', 'EXC', 'LHX', 'RL', 'ANET', 'STE', 'WM', 'DRE', 'IRM', 'ZTS', 'WEC', 'GPS', 'KR', 'FISV', 'PRU', 'MNST', 'LNC', 'AMP', 'ULTA', 'NXPI', 'MDLZ', 'IBM', 'FFIV', 'FIS', 'CTLT', 'PAYC', 'PXD', 'SHW', 'SEE', 'WELL', 'EIX', 'JNJ', 'EA', 'NWS', 'INFO', 'C', 'TROW', 'ATVI', 'MS', 'MRNA', 'CBOE', 'GPC', 'AWK', 'TXN', 'SYK', 'BAX', 'CSX', 'DG', 'MSFT', 'ADSK', 'DUK', 'PKI', 'DVN', 'MSI', 'TSLA', 'L', 'LH', 'TXT', 'ZBH', 'DD', 'CHTR', 'KEYS', 'FITB', 'AXP', 'HOLX', 'KMX', 'ADP', 'UAA', 'DPZ', 'IDXX', 'FANG', 'GL', 'CF', 'BIIB', 'ABMD', 'AFL', 'AOS', 'UNH', 'IPGP', 'HAL', 'MXIM', 'CTSH', 'TTWO', 'WBA', 'PGR', 'REGN', 'GD', 'TAP', 'WFC', 'TWTR']
+
+        return sp500
