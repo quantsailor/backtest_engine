@@ -355,6 +355,7 @@ class BacktestEngine():
         else:
             ax1.plot(asset)
             ax1.legend(['Strategy'])
+        ax1.set_yscale('log')
         
         ax2 = axs[1]
         ax2.axis('off')
