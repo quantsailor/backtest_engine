@@ -69,6 +69,8 @@ class DataLoader():
             
         if fred_key is not None:
             self.macro_df = self.update_macro(fred_key, fred_list)
+        else:
+            self.macro_df = pd.DataFrame({'datekey':[], 'value':[], 'ticker':[]})
 
     @timeis
     def update_universe(self, sdate, edate, size):
