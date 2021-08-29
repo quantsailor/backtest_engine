@@ -34,7 +34,7 @@ class Strategy():
         for ticker in universe_list:
             try:
                 factor = self.compute_factor(ticker, ftype)
-                sector = self.get_value(ticker,'tickerinfo','sector')
+                sector = self.get_value('tickerinfo', ticker, 'sector')
             except:
                 factor = np.nan
             if np.isnan(factor):
@@ -72,7 +72,7 @@ class Strategy():
             x = np.nan
         return x
     
-    def get_value_list(self, ticker, table, value, lag='max'):
+    def get_value_list(self, table, ticker, value, lag='max'):
         try:
             if lag == 'max':
                 x = self.cache[table][ticker][value]

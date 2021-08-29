@@ -57,7 +57,7 @@ class DataLoader():
 
             df_quandl = self.market_df
             df_yf = self.update_market_yf(universe)
-            self.market_data_df = pd.concat([df_quandl, df_yf]).drop_duplicates(['date','ticker'])
+            self.market_df = pd.concat([df_quandl, df_yf]).drop_duplicates(['date','ticker'])
         else:
             self.universe_df = self.update_universe_yf(size)
             universe = list(set(self.universe_df.ticker))
