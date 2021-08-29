@@ -18,25 +18,15 @@ def timeis(func):
     return wrap
 
 DOWNLOAD_PATH = './data'
-DB_PATH = './DB'
 class DataLoader():
     def __init__(self, fred_key=None, quandl_key=None, fred_list=[], yfinance_list=[],
-        sdate=None, edate=None, size=100, db_name=None, is_update=False):
-        
-        try:
-            os.mkdir(DOWNLOAD_PATH)
-        except:
-            pass
-        try:
-            os.mkdir(DB_PATH)
-        except:
-            pass
+        sdate=None, edate=None, size=100, db_name='./MyDB.db', is_update=False):
 
         if sdate is None: sdate = '1900-01-01'
         if edate is None: edate = dt.datetime.today().strftime('%Y-%m-%d')
         
         if is_update:
-            db = sqlite3.connect(DB_PATH+'/'+db_name)
+            db = sqlite3.connect(db_name)
             date_list = list(pd.read_sql('SELECT * FROM market', db).date.sort_values().unique())
             sdate = date_list[-1]
             db.close()
@@ -45,15 +35,13 @@ class DataLoader():
         
         self.update_data(sdate, edate, size, fred_key, quandl_key, fred_list, yfinance_list)
 
-        if db_name is None:
-            db_name = DB_PATH+'/backtest_{}_{}_{}.db'.format(
-                size, 
-                pd.to_datetime(self.market_data_df.date.iloc[0]).strftime('%Y-%m-%d'), 
-                pd.to_datetime(self.market_data_df.date.iloc[-1]).strftime('%Y-%m-%d'))
-        else:
-            db_name = DB_PATH+'/'+db_name
+        self.save_db(db_name=db_name, is_update=is_update)
 
-        self.save_db(db_name, is_update)
+    def make_download_folder():
+        try:
+            os.mkdir(DOWNLOAD_PATH)
+        except:
+            pass
 
     @timeis
     def update_data(self, sdate, edate, size, fred_key, quandl_key, fred_list, yfinance_list):
@@ -61,27 +49,26 @@ class DataLoader():
             quandl.ApiConfig.api_key = quandl_key
             self.universe_df = self.update_universe(sdate, edate, size)
             universe = list(set(self.universe_df.ticker))
+            universe = list(set(yfinance_list + universe))
             self.ticker_df = self.update_ticker(universe)
-            self.quanterly_report_df = self.update_fundamentals(sdate, edate, universe)
-            self.daily_metric_df = self.update_metric(sdate, edate, universe)
-            self.market_data_df = self.update_market(sdate, edate, universe)
-        else:
-            self.universe_df = pd.DataFrame({'date':[], 'ticker':[]})
-            self.ticker_df = pd.DataFrame({'permaticker':[], 'ticker':[]})
-            self.quanterly_report_df = pd.DataFrame({'datekey':[], 'ticker':[]})
-            self.daily_metric_df = pd.DataFrame({'date':[], 'ticker':[]})
-            self.market_data_df = None
-            universe = self.get_default_universe()
-            
+            self.fundamental_df = self.update_fundamentals(sdate, edate, universe)
+            self.metric_df = self.update_metric(sdate, edate, universe)
+            self.market_df = self.update_market(sdate, edate, universe)
 
+            df_quandl = self.market_df
+            df_yf = self.update_market_yf(universe)
+            self.market_data_df = pd.concat([df_quandl, df_yf]).drop_duplicates(['date','ticker'])
+        else:
+            self.universe_df = self.update_universe_yf(size)
+            universe = list(set(self.universe_df.ticker))
+            universe = list(set(yfinance_list + universe))
+            self.fundamental_df = self.update_fundamentals_yf(universe)
+            self.market_df = self.update_market_yf(universe)
+            self.ticker_df, ticker_to_info = self.update_ticker_yf(universe)
+            self.metric_df = self.update_metric_yf(universe, ticker_to_info)
+            
         if fred_key is not None:
             self.macro_df = self.update_macro(fred_key, fred_list)
-
-        yfinance_list = list(set(yfinance_list + universe))
-        df_quandl = self.market_data_df
-        df_yf = self.update_market_yf(yfinance_list)
-        self.market_data_df = pd.concat([df_quandl, df_yf]).drop_duplicates(['date','ticker'])
-
 
     @timeis
     def update_universe(self, sdate, edate, size):
@@ -102,6 +89,7 @@ class DataLoader():
                             ).groupby('date').head(size).set_index('date').sort_index()
         except:
             print('Trying bulk download for universe')
+            self.make_download_folder()
             filename = DOWNLOAD_PATH+'/universe.zip'
             quandl.export_table('SHARADAR/DAILY',  
                                   date = monthly_date_list, 
@@ -118,6 +106,15 @@ class DataLoader():
         return df
     
     @timeis
+    def update_universe_yf(self, size):
+        universe = self.get_default_universe(size)
+        df = pd.DataFrame({'ticker':universe, 
+            'date':[pd.to_datetime('1900-01-01')]*len(universe),
+            'marketcap':[0]*len(universe)})
+        df = df.set_index('date').sort_index().reset_index()
+        return df
+
+    @timeis
     def update_ticker(self, universe):
         try:
             print('Trying API call for tickers')
@@ -125,6 +122,7 @@ class DataLoader():
                                      paginate=True).set_index('permaticker').sort_index()
         except:
             print('Trying bulk download for tickers')
+            self.make_download_folder()
             filename = DOWNLOAD_PATH+'/tickers.zip'
             quandl.export_table('SHARADAR/TICKERS',ticker=universe, table='SF1', filename=filename)
             zf = zipfile.ZipFile(filename, 'r')
@@ -134,6 +132,26 @@ class DataLoader():
         df = df.reset_index()
 
         return df
+
+    @timeis
+    def update_ticker_yf(self, universe):
+        df = pd.DataFrame({'ticker':[], 'permaticker':[], 'sector':[]})
+        idx = 0
+        ticker_to_info = {}
+        for ticker in universe:
+            idx += 1
+            try:
+                tickerinfo = yf.Ticker(ticker.replace('.','-')).info
+                sector = tickerinfo['sector']
+            except:
+                sector = 'unknown'
+                print('{} has no sector information'.format(ticker))
+            df.append({'ticker':ticker, 'permaticker':idx, 'sector':sector}, ignore_index=True)
+            ticker_to_info[ticker] = tickerinfo
+
+        df = df.set_index('permaticker').sort_index().reset_index()
+
+        return df, ticker_to_info
     
     @timeis
     def update_fundamentals(self, sdate, edate, universe):
@@ -145,6 +163,7 @@ class DataLoader():
                           dimension = 'ART', paginate=True).set_index('datekey').sort_index()
         except:
             print('Trying bulk download for fundamentals')
+            self.make_download_folder()
             filename = DOWNLOAD_PATH+'/fundamentals.zip'
             quandl.export_table('SHARADAR/SF1', 
                           ticker = universe,
@@ -159,6 +178,30 @@ class DataLoader():
         return df
     
     @timeis
+    def update_fundamentals_yf(self, universe):
+        df = None
+        for ticker in universe:
+            try:
+                ticker_yf = yf.Ticker(ticker.replace('.','-'))
+
+                financials = ticker_yf.financials.T
+                balance_sheet = ticker_yf.balance_sheet.T
+                cashflow = ticker_yf.cashflow.T
+
+                df_add = pd.concat([financials, balance_sheet, cashflow], axis=1)
+                df_add['ticker'] = ticker
+                df_add = df_add.loc[:,~df_add.columns.duplicated()]
+
+                df = pd.concat([df, df_add])
+            except:
+                print('{} has no fundamental information'.format(ticker))
+
+        df.index = pd.to_datetime(df.index.rename('datekey'))
+        df = df.reset_index()
+
+        return df
+
+    @timeis
     def update_metric(self, sdate, edate, universe):
         try:
             print('Trying API call for metric')
@@ -168,6 +211,7 @@ class DataLoader():
                           ).set_index('date').sort_index()
         except:
             print('Trying bulk download for metric')
+            self.make_download_folder()
             filename = DOWNLOAD_PATH+'/metric.zip'
             quandl.export_table('SHARADAR/DAILY', 
                           ticker = universe,
@@ -180,6 +224,26 @@ class DataLoader():
 
         return df
     
+    @timeis
+    def update_metric_yf(self, universe, ticker_to_info):
+        df = None
+        market_df = self.market_df
+        for ticker in universe:
+            try:
+                tickerinfo = ticker_to_info[ticker]
+                df_add = market_df[market_df.ticker==ticker][['date', 'close']]
+                total_stocks = tickerinfo['marketCap']/df_add.iloc[-1].close
+
+                df_add['close'] = df_add['close']*total_stocks
+                df_add.columns = ['date','marketcap']
+                df_add['ticker'] = ticker
+            except:
+                print('{} has no marketcap data'.format(ticker))
+
+            df = pd.concat([df, df_add])
+
+        return df
+
     @timeis
     def update_market(self, sdate, edate, universe):
         try:
@@ -204,6 +268,28 @@ class DataLoader():
 
         return df
         
+    @timeis
+    def update_market_yf(self, yfinance_list):
+        df = None
+        yf_ticker_list = [
+            '^GSPC','^IXIC','^DJI','^RUT','^VIX','^TNX','^SP500TR',
+            'GC=F', 'CL=F']
+
+        tickers = [x.replace('.','-') for x in set(yf_ticker_list + yfinance_list)]
+        df_all = yf.download(tickers=tickers, auto_adjust=True, period='max', group_by='ticker')
+
+        df = None
+        for ticker in tickers:
+            df_add = df_all[ticker].dropna()
+            df_add['ticker'] = ticker.replace('-','.')
+            df = pd.concat([df,df_add])
+            
+        df = df.reset_index()
+        df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'ticker']]
+        df.columns = ['date', 'open', 'high', 'low', 'close', 'volume', 'ticker',]
+        
+        return df
+
     @timeis
     def update_macro(self, fred_key, fred_list):
 
@@ -255,38 +341,16 @@ class DataLoader():
         return df
     
     @timeis
-    def update_market_yf(self, yfinance_list):
-        df = None
-        yf_ticker_list = [
-            '^GSPC','^IXIC','^DJI','^RUT','^VIX','^TNX','^SP500TR',
-            'GC=F', 'CL=F']
-
-        tickers = [x.replace('.','-') for x in set(yf_ticker_list + yfinance_list)]
-        df_all = yf.download(tickers=tickers, auto_adjust=True, period='max', group_by='ticker')
-
-        df = None
-        for ticker in tickers:
-            df_add = df_all[ticker].dropna()
-            df_add['ticker'] = ticker
-            df = pd.concat([df,df_add])
-            
-        df = df.reset_index()
-        df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'ticker']]
-        df.columns = ['date', 'open', 'high', 'low', 'close', 'volume', 'ticker',]
-        
-        return df
-    
-    @timeis
-    def save_db(self, db_name, is_update):
+    def save_db(self, db_name, is_update=False):
 
         db = sqlite3.connect(db_name)
 
         if_exists = 'append' if is_update else 'replace'
         self.universe_df.to_sql(name='universe', con=db, if_exists=if_exists, index=False)
         self.ticker_df.to_sql(name='ticker', con=db, if_exists=if_exists, index=False)
-        self.quanterly_report_df.to_sql(name='fundamentals', con=db, if_exists=if_exists, index=False)
-        self.daily_metric_df.to_sql(name='metric', con=db, if_exists=if_exists, index=False)
-        self.market_data_df.to_sql(name='market', con=db, if_exists=if_exists, index=False)
+        self.fundamental_df.to_sql(name='fundamentals', con=db, if_exists=if_exists, index=False)
+        self.metric_df.to_sql(name='metric', con=db, if_exists=if_exists, index=False)
+        self.market_df.to_sql(name='market', con=db, if_exists=if_exists, index=False)
         self.macro_df.to_sql(name='macro', con=db, if_exists=if_exists, index=False)
 
         if is_update:
@@ -313,7 +377,511 @@ class DataLoader():
         print('Data saved in {}'.format(db_name))
 
 
-    def get_default_universe(self):
-        sp500 = ['HPE', 'ICE', 'CLX', 'MAR', 'GOOGL', 'AJG', 'FTV', 'ANSS', 'INTU', 'SBUX', 'KMI', 'HAS', 'ALGN', 'F', 'NOV', 'BA', 'ECL', 'LB', 'ALK', 'RF', 'AIZ', 'CRM', 'TMO', 'XYL', 'ESS', 'CRK', 'AMD', 'MPC', 'A', 'AMCR', 'AMGN', 'JPM', 'VNO', 'T', 'VLO', 'HIG', 'PSX', 'PG', 'EBAY', 'CERN', 'ENPH', 'OXY', 'TPR', 'MSCI', 'EFX', 'NTAP', 'ANTM', 'CHRW', 'APTV', 'MU', 'BBY', 'UDR', 'JBHT', 'ARE', 'BK', 'DLTR', 'RTX', 'EXPD', 'REG', 'LOW', 'POOL', 'RE', 'HSY', 'GM', 'WMT', 'MAA', 'MCO', 'KIM', 'V', 'URI', 'MOS', 'IQV', 'D', 'LIN', 'FB', 'IP', 'PENN', 'CNC', 'PKG', 'CDW', 'FCX', 'NI', 'WDC', 'NKE', 'PNR', 'MRK', 'BEN', 'CAG', 'MCK', 'TSN', 'NEM', 'AZO', 'FOXA', 'HD', 'DAL', 'MTB', 'IVZ', 'VTR', 'LUV', 'DXCM', 'EQR', 'VRTX', 'CFG', 'MTD', 'IT', 'ADBE', 'TFC', 'FBHS', 'NSC', 'PH', 'TEL', 'HII', 'ISRG', 'NUE', 'CBRE', 'OGN', 'CE', 'PFG', 'KSU', 'MGM', 'CPRT', 'ROL', 'GIS', 'PEP', 'KHC', 'NFLX', 'RJF', 'HSIC', 'APD', 'AVGO', 'SNPS', 'FRT', 'FTNT', 'BMY', 'ROP', 'MRO', 'EL', 'LYB', 'VMC', 'CME', 'PEAK', 'XOM', 'UNP', 'CCL', 'ILMN', 'DGX', 'STX', 'TYL', 'AAL', 'ORCL', 'IEX', 'EXR', 'CCI', 'NWL', 'GOOG', 'QRVO', 'PYPL', 'CVS', 'GPN', 'FLT', 'BAC', 'CAT', 'COP', 'PLD', 'XRAY', 'DOV', 'SJM', 'TGT', 'COST', 'HCA', 'WYNN', 'MLM', 'RHI', 'NLOK', 'DHI', 'NOC', 'TRV', 'PHM', 'SRE', 'LDOS', 'PRGO', 'BSX', 'ALLE', 'AVY', 'ETR', 'WAB', 'BF.B', 'CTXS', 'EW', 'ETN', 'JCI', 'IR', 'TRMB', 'FDX', 'NDAQ', 'LW', 'FRC', 'UHS', 'EMR', 'ES', 'JNPR', 'COF', 'AES', 'ADI', 'LEG', 'BRK.B', 'APA', 'DLR', 'TDY', 'WU', 'MPWR', 'BKR', 'GWW', 'AMT', 'BKNG', 'PVH', 'TMUS', 'TSCO', 'VRSN', 'NEE', 'PPG', 'UNM', 'AKAM', 'NCLH', 'SCHW', 'HST', 'MA', 'MAS', 'HUM', 'HBAN', 'XLNX', 'NWSA', 'ALB', 'GS', 'PSA', 'LYV', 'AME', 'OTIS', 'BR', 'PPL', 'HON', 'CMG', 'AMAT', 'CNP', 'KO', 'MET', 'AIG', 'VIAC', 'AAPL', 'LKQ', 'DHR', 'HES', 'USB', 'CTL', 'XEL', 'CINF', 'COG', 'SYF', 'ZION', 'GILD', 'DVA', 'SWKS', 'CHD', 'HPQ', 'K', 'EXPE', 'PNC', 'EQIX', 'WST', 'ED', 'TJX', 'UPS', 'LVS', 'WHR', 'TER', 'GE', 'LRCX', 'WMB', 'LMT', 'ZBRA', 'RSG', 'HBI', 'MKTX', 'DRI', 'MMM', 'PCAR', 'GLW', 'DXC', 'CMI', 'INCY', 'NVR', 'ABC', 'AEP', 'WY', 'CDNS', 'CTVA', 'WRB', 'HLT', 'EOG', 'O', 'RMD', 'PM', 'DISH', 'WRK', 'SO', 'VZ', 'AAP', 'UA', 'COO', 'ATO', 'NOW', 'BDX', 'DIS', 'NTRS', 'GRMN', 'GNRC', 'DOW', 'PNW', 'MCHP', 'KEY', 'STZ', 'PWR', 'INTC', 'DISCA', 'WLTW', 'SNA', 'FE', 'AVB', 'ORLY', 'SWK', 'LEN', 'PTC', 'MHK', 'JKHY', 'VFC', 'SBAC', 'IFF', 'LLY', 'CMA', 'BXP', 'KMB', 'NVDA', 'CVX', 'CL', 'LNT', 'TFX', 'CARR', 'ITW', 'ODFL', 'OKE', 'PEG', 'KLAC', 'FMC', 'MDT', 'ROK', 'SLB', 'HRL', 'ETSY', 'AEE', 'PBCT', 'ABBV', 'RCL', 'SPGI', 'PAYX', 'DE', 'EVRG', 'AON', 'CTAS', 'SYY', 'SPG', 'NRG', 'BWA', 'NLSN', 'BLL', 'MCD', 'PFE', 'HWM', 'MYL', 'BLK', 'FOX', 'CZR', 'TT', 'STT', 'SIVB', 'APH', 'TDG', 'ABT', 'WAT', 'ADM', 'IPG', 'CMCSA', 'MKC', 'CI', 'MMC', 'AMZN', 'VRSK', 'DTE', 'YUM', 'OMC', 'CMS', 'CB', 'ALL', 'FAST', 'ROST', 'BIO', 'CAH', 'DFS', 'J', 'ACN', 'UAL', 'QCOM', 'MO', 'CPB', 'EMN', 'DISCK', 'CSCO', 'EXC', 'LHX', 'RL', 'ANET', 'STE', 'WM', 'DRE', 'IRM', 'ZTS', 'WEC', 'GPS', 'KR', 'FISV', 'PRU', 'MNST', 'LNC', 'AMP', 'ULTA', 'NXPI', 'MDLZ', 'IBM', 'FFIV', 'FIS', 'CTLT', 'PAYC', 'PXD', 'SHW', 'SEE', 'WELL', 'EIX', 'JNJ', 'EA', 'NWS', 'INFO', 'C', 'TROW', 'ATVI', 'MS', 'MRNA', 'CBOE', 'GPC', 'AWK', 'TXN', 'SYK', 'BAX', 'CSX', 'DG', 'MSFT', 'ADSK', 'DUK', 'PKI', 'DVN', 'MSI', 'TSLA', 'L', 'LH', 'TXT', 'ZBH', 'DD', 'CHTR', 'KEYS', 'FITB', 'AXP', 'HOLX', 'KMX', 'ADP', 'UAA', 'DPZ', 'IDXX', 'FANG', 'GL', 'CF', 'BIIB', 'ABMD', 'AFL', 'AOS', 'UNH', 'IPGP', 'HAL', 'MXIM', 'CTSH', 'TTWO', 'WBA', 'PGR', 'REGN', 'GD', 'TAP', 'WFC', 'TWTR']
-
-        return sp500
+    def get_default_universe(self, size):
+        sp500 = ['AAPL',
+            'MSFT',
+            'AMZN',
+            'FB',
+            'GOOGL',
+            'GOOG',
+            'NVDA',
+            'BRK.B',
+            'TSLA',
+            'JPM',
+            'JNJ',
+            'UNH',
+            'V',
+            'PG',
+            'HD',
+            'PYPL',
+            'DIS',
+            'BAC',
+            'ADBE',
+            'MA',
+            'CMCSA',
+            'PFE',
+            'CRM',
+            'CSCO',
+            'NFLX',
+            'XOM',
+            'VZ',
+            'ABT',
+            'TMO',
+            'KO',
+            'INTC',
+            'PEP',
+            'NKE',
+            'ABBV',
+            'ACN',
+            'LLY',
+            'WFC',
+            'WMT',
+            'DHR',
+            'COST',
+            'AVGO',
+            'MRK',
+            'T',
+            'CVX',
+            'MDT',
+            'MCD',
+            'TXN',
+            'NEE',
+            'LIN',
+            'ORCL',
+            'QCOM',
+            'HON',
+            'PM',
+            'MS',
+            'INTU',
+            'BMY',
+            'C',
+            'UNP',
+            'LOW',
+            'GS',
+            'UPS',
+            'SBUX',
+            'BLK',
+            'AMD',
+            'AMT',
+            'RTX',
+            'AMGN',
+            'IBM',
+            'ISRG',
+            'NOW',
+            'TGT',
+            'MRNA',
+            'AMAT',
+            'BA',
+            'DE',
+            'CAT',
+            'GE',
+            'MMM',
+            'SCHW',
+            'CHTR',
+            'CVS',
+            'AXP',
+            'SPGI',
+            'ZTS',
+            'PLD',
+            'BKNG',
+            'ANTM',
+            'MO',
+            'GILD',
+            'TJX',
+            'SYK',
+            'ADP',
+            'LMT',
+            'MDLZ',
+            'LRCX',
+            'CB',
+            'CCI',
+            'MU',
+            'PNC',
+            'TMUS',
+            'DUK',
+            'FIS',
+            'MMC',
+            'EL',
+            'USB',
+            'COF',
+            'TFC',
+            'CSX',
+            'COP',
+            'EQIX',
+            'EW',
+            'SHW',
+            'BDX',
+            'CME',
+            'CI',
+            'REGN',
+            'FISV',
+            'SO',
+            'ILMN',
+            'ADSK',
+            'ETN',
+            'ITW',
+            'HCA',
+            'ICE',
+            'CL',
+            'FDX',
+            'NSC',
+            'AON',
+            'BSX',
+            'D',
+            'ATVI',
+            'EMR',
+            'GM',
+            'ADI',
+            'NXPI',
+            'MCO',
+            'WM',
+            'APD',
+            'IDXX',
+            'PGR',
+            'ECL',
+            'NOC',
+            'JCI',
+            'CMG',
+            'DG',
+            'A',
+            'HUM',
+            'BIIB',
+            'VRTX',
+            'MSCI',
+            'KLAC',
+            'F',
+            'FCX',
+            'ROP',
+            'ALGN',
+            'TWTR',
+            'TEL',
+            'TROW',
+            'SNPS',
+            'DXCM',
+            'IQV',
+            'EBAY',
+            'LHX',
+            'PSA',
+            'GPN',
+            'EXC',
+            'TT',
+            'DOW',
+            'CARR',
+            'AIG',
+            'KMB',
+            'MET',
+            'GD',
+            'NEM',
+            'APH',
+            'BK',
+            'DLR',
+            'CDNS',
+            'INFO',
+            'AEP',
+            'SPG',
+            'MCHP',
+            'ROST',
+            'ORLY',
+            'FTNT',
+            'PRU',
+            'APTV',
+            'SRE',
+            'RMD',
+            'MSI',
+            'CTSH',
+            'ALL',
+            'EA',
+            'TRV',
+            'SYY',
+            'DFS',
+            'DD',
+            'YUM',
+            'EOG',
+            'SLB',
+            'PH',
+            'SBAC',
+            'PPG',
+            'IFF',
+            'OTIS',
+            'BAX',
+            'ROK',
+            'XLNX',
+            'MPC',
+            'CNC',
+            'XEL',
+            'MTD',
+            'STZ',
+            'PAYX',
+            'MNST',
+            'AFL',
+            'MAR',
+            'WELL',
+            'NUE',
+            'CMI',
+            'GIS',
+            'HPQ',
+            'HLT',
+            'FRC',
+            'CTAS',
+            'AZO',
+            'KR',
+            'WBA',
+            'PXD',
+            'ADM',
+            'WST',
+            'SIVB',
+            'AWK',
+            'CTVA',
+            'KEYS',
+            'STT',
+            'TDG',
+            'PEG',
+            'VRSK',
+            'EFX',
+            'FAST',
+            'DHI',
+            'AMP',
+            'CBRE',
+            'KMI',
+            'MCK',
+            'AME',
+            'AVB',
+            'ANSS',
+            'ZBH',
+            'SWK',
+            'ES',
+            'ZBRA',
+            'BLL',
+            'GLW',
+            'PSX',
+            'SWKS',
+            'WEC',
+            'CPRT',
+            'LUV',
+            'LH',
+            'WMB',
+            'AJG',
+            'LEN',
+            'EQR',
+            'PCAR',
+            'ARE',
+            'MXIM',
+            'CDW',
+            'WLTW',
+            'FITB',
+            'SYF',
+            'ODFL',
+            'ETSY',
+            'ALB',
+            'GNRC',
+            'VLO',
+            'KSU',
+            'O',
+            'IT',
+            'BBY',
+            'WY',
+            'LYB',
+            'DAL',
+            'RSG',
+            'GRMN',
+            'ED',
+            'HSY',
+            'WAT',
+            'URI',
+            'DOV',
+            'VMC',
+            'FTV',
+            'NTRS',
+            'VFC',
+            'EXR',
+            'VIAC',
+            'XYL',
+            'HIG',
+            'MLM',
+            'TRMB',
+            'PAYC',
+            'ENPH',
+            'OKE',
+            'KHC',
+            'DTE',
+            'CERN',
+            'IP',
+            'TSN',
+            'ETR',
+            'HBAN',
+            'AEE',
+            'PPL',
+            'CTLT',
+            'TSCO',
+            'NDAQ',
+            'DLTR',
+            'COO',
+            'EIX',
+            'CRL',
+            'MAA',
+            'FLT',
+            'ULTA',
+            'VRSN',
+            'MKC',
+            'TDY',
+            'QRVO',
+            'FE',
+            'CZR',
+            'EXPD',
+            'CLX',
+            'STE',
+            'ESS',
+            'MPWR',
+            'PKI',
+            'KMX',
+            'VTR',
+            'EXPE',
+            'ANET',
+            'CHD',
+            'OXY',
+            'HOLX',
+            'KEY',
+            'DPZ',
+            'AMCR',
+            'RF',
+            'BR',
+            'HPE',
+            'DGX',
+            'TER',
+            'DRI',
+            'IR',
+            'TYL',
+            'POOL',
+            'NTAP',
+            'WDC',
+            'PEAK',
+            'GWW',
+            'CCL',
+            'DRE',
+            'AVY',
+            'CFG',
+            'AKAM',
+            'HES',
+            'CMS',
+            'CINF',
+            'TTWO',
+            'MKTX',
+            'CE',
+            'TFX',
+            'BBWI',
+            'MTB',
+            'GPC',
+            'RCL',
+            'NVR',
+            'HAL',
+            'J',
+            'VTRS',
+            'MGM',
+            'DVN',
+            'ABC',
+            'BIO',
+            'IEX',
+            'RJF',
+            'STX',
+            'PFG',
+            'TXT',
+            'BKR',
+            'ABMD',
+            'K',
+            'CAG',
+            'AES',
+            'BXP',
+            'MAS',
+            'EVRG',
+            'WAB',
+            'UDR',
+            'NLOK',
+            'OMC',
+            'EMN',
+            'LNT',
+            'CAH',
+            'UAL',
+            'CNP',
+            'JBHT',
+            'LKQ',
+            'PHM',
+            'IPG',
+            'PKG',
+            'LVS',
+            'PWR',
+            'INCY',
+            'WHR',
+            'FBHS',
+            'PTC',
+            'AAP',
+            'SJM',
+            'CBOE',
+            'WRK',
+            'JKHY',
+            'XRAY',
+            'FANG',
+            'IRM',
+            'LDOS',
+            'KIM',
+            'PNR',
+            'AAL',
+            'BF.B',
+            'ALLE',
+            'ATO',
+            'L',
+            'HWM',
+            'HRL',
+            'HAS',
+            'LNC',
+            'CTXS',
+            'FOXA',
+            'FFIV',
+            'SNA',
+            'LYV',
+            'FMC',
+            'CHRW',
+            'UHS',
+            'PENN',
+            'LUMN',
+            'MHK',
+            'TPR',
+            'RHI',
+            'HST',
+            'NRG',
+            'MOS',
+            'RE',
+            'DISH',
+            'HSIC',
+            'REG',
+            'WRB',
+            'WYNN',
+            'CMA',
+            'BWA',
+            'AIZ',
+            'AOS',
+            'JNPR',
+            'NI',
+            'NWL',
+            'CF',
+            'LW',
+            'IVZ',
+            'SEE',
+            'DVA',
+            'DXC',
+            'NCLH',
+            'ZION',
+            'MRO',
+            'GL',
+            'TAP',
+            'WU',
+            'BEN',
+            'NWSA',
+            'PNW',
+            'OGN',
+            'ROL',
+            'FRT',
+            'HII',
+            'CPB',
+            'DISCK',
+            'NLSN',
+            'PVH',
+            'ALK',
+            'PBCT',
+            'APA',
+            'HBI',
+            'VNO',
+            'LEG',
+            'IPGP',
+            'COG',
+            'RL',
+            'GPS',
+            'UNM',
+            'PRGO',
+            'FOX',
+            'NOV',
+            'DISCA',
+            'UAA',
+            'UA',
+            'NWS']
+            
+        return sp500[:size]

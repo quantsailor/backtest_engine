@@ -15,54 +15,10 @@ class Strategy():
 
         return target_weight
     
-    def default_factor(self, ticker, ftype):
-        if ftype == 'GP/A':
-            gp = self.get_value(ticker, 'fundamentals','gp')
-            assets = self.get_value(ticker, 'fundamentals','assets')
-            return gp/assets
-        
-        elif ftype == 'RND/A':
-            rnd = self.get_value(ticker, 'fundamentals','rnd')
-            assets = self.get_value(ticker, 'fundamentals','assets')
-            return rnd/assets
-        
-        elif ftype == 'E/M':
-            pe = self.get_value(ticker,'metric','pe')
-            return 1/pe
-        
-        elif ftype == 'EPSG/PE':
-            pe = self.get_value(ticker,'metric','pe')
-            eps_growth = np.log(self.get_value(ticker,'fundamentals','eps')/self.get_value(ticker,'fundamentals','eps',1))
-            return eps_growth/pe
-        
-        elif ftype == 'F-score':
-            ROA = self.get_value(ticker,'fundamentals','roa')
-            ROA_1Y = self.get_value(ticker,'fundamentals','roa', 4)
-            OCF = self.get_value(ticker,'fundamentals','ncfo')
-            ASSET = self.get_value(ticker,'fundamentals','assets')
-            
-            DE = self.get_value(ticker,'fundamentals','de')
-            DE_1Y = self.get_value(ticker,'fundamentals','de', 4)
-            CR = self.get_value(ticker,'fundamentals','currentratio')
-            CR_1Y = self.get_value(ticker,'fundamentals','currentratio',4)
-            SHARE = self.get_value(ticker,'fundamentals','sharesbas')
-            SHARE_1Y = self.get_value(ticker,'fundamentals','sharesbas', 4)
-            
-            GM = self.get_value(ticker,'fundamentals','grossmargin')
-            GM_1Y = self.get_value(ticker,'fundamentals','grossmargin', 4)
-            AT = self.get_value(ticker,'fundamentals','assetturnover')
-            AT_1Y = self.get_value(ticker,'fundamentals','assetturnover', 4)
-            
-            point = 1.*(ROA > 0) + 1.*(OCF > 0) + 1.*(ROA > ROA_1Y) + 1.*(OCF/ASSET > ROA)
-            point += 1.*(DE < DE_1Y) + 1.*(CR > CR_1Y) + 1.*(SHARE < SHARE_1Y)
-            point += 1.*(GM > GM_1Y) + 1.*(AT > AT_1Y)
-            
-            return point
-            
-        else:
-            assert False
-
     def custom_factor(self, ticker, ftype):
+        assert False
+
+    def default_factor(self, ticker, ftype):
         assert False
     
     def compute_factor(self, ticker, ftype):

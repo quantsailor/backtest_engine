@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name = 'quantnote',
-    version = '0.0.1',
+    version = '0.0.3',
     author = "quantnote",
     email = "quantsailor@gmail.com",
     license = "GPL",

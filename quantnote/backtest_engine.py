@@ -113,7 +113,7 @@ class BacktestEngine():
                 last_date = self.cache['universe'].loc[:date].index[-1]
                 universe = list(set(self.cache['universe'].loc[last_date].ticker))
             except:
-                universe = self.get_default_universe()
+                assert False
             return universe
 
     @timeis
@@ -323,14 +323,23 @@ class BacktestEngine():
 
         return target_weight
 
-    def show_report(self, benchmark='^SP500TR', filename='report.png'):
-        dates = self.asset_df.index
+    def show_report(self, benchmark='^SP500TR', filename=None):
+        
         asset = self.asset_df.sum(axis=1)
-        if benchmark is not None:
+        if benchmark is not None and type(benchmark) == str:
+            dates = list(set(self.asset_df.index) & set(self.cache['market'][benchmark].index))
+            dates.sort()
             bench = self.cache['market'][benchmark].close.loc[dates]
-            bench = bench/bench.iloc[0]\
+            bench = bench/bench.iloc[0]
 
-        stat_df = self.stat(benchmark)
+        elif benchmark is not None and type(benchmark) == type(pd.DataFrame()):
+            dates = list(set(self.asset_df.index) & set(benchmark.index))
+            dates.sort()
+            benchmark = benchmark.sum(axis=1)
+            bench = benchmark.loc[dates]
+            bench = bench/bench.iloc[0]
+
+        stat_df = self.stat(bench)
 
         fig, axs = plt.subplots(1, 2, gridspec_kw={'width_ratios': [2, 1]},figsize=(12,5))
         
@@ -352,9 +361,11 @@ class BacktestEngine():
 
         fig.autofmt_xdate()
         fig.show()
-        fig.savefig(filename)
 
-    def stat(self, benchmark = '^SP500TR'):
+        if filename is not None:
+            fig.savefig(filename)
+
+    def stat(self, bench):
         def _max_underwater(asset):
             ser = (asset - asset.cummax())
             underwater_periods = []
@@ -367,9 +378,18 @@ class BacktestEngine():
                     days=0
             return np.max(underwater_periods)
             
-        asset = self.asset_df.sum(axis=1)
-        dates = asset.index
+        asset = self.asset_df.sum(axis=1).iloc[1:]
+        transaction = self.transaction_df.apply(np.abs).sum(axis=1).iloc[1:]
 
+        TO = (transaction/asset).resample('M').sum().mean()*6
+
+        if bench is not None:
+            dates = list(set(asset.index) & set(bench.index))
+            dates.sort()
+            asset = asset.loc[dates]
+            transaction = transaction.loc[dates]
+            bench = bench.loc[dates]
+        
         rets = asset.apply(np.log).diff().dropna()
         cagr = 252*np.mean(rets)
         vol = np.sqrt(252)*np.std(rets)
@@ -377,10 +397,10 @@ class BacktestEngine():
         IR = 0
         mdd = asset.div(asset.cummax()).min()-1
         mup = _max_underwater(asset)
+        
 
-        if benchmark is not None:
-            bench = self.cache['market'][benchmark].close.loc[dates]
-            bench = bench/bench.iloc[0]
+        if bench is not None:
+
             bench_rets = bench.apply(np.log).diff().dropna()
             excess_rets = rets - bench_rets
             IR = np.sqrt(252)*np.mean(excess_rets)/np.std(excess_rets)
@@ -394,31 +414,47 @@ class BacktestEngine():
 
             stat_b = {'CAGR':'{:.3f}'.format(cagr_b), 
                 'Vol':'{:.3f}'.format(vol_b), 
-                'SR':'{:.3f}'.format(sharpe_b), 
+                'Sharpe':'{:.3f}'.format(sharpe_b), 
                 'IR':'{:.3f}'.format(IR_b), 
                 'MDD':'{:.3f}'.format(mdd_b), 
-                'MUP':'{} days'.format(mup_b)}
+                'MUP':'{} days'.format(mup_b),
+                'Turnover':'{:.3f}'.format(0)}
         
         stat = {'CAGR':'{:.3f}'.format(cagr), 
                 'Vol':'{:.3f}'.format(vol), 
-                'SR':'{:.3f}'.format(sharpe), 
+                'Sharpe':'{:.3f}'.format(sharpe), 
                 'IR':'{:.3f}'.format(IR), 
                 'MDD':'{:.3f}'.format(mdd), 
-                'MUP':'{} days'.format(mup)}
+                'MUP':'{} days'.format(mup),
+                'Turnover':'{:.3f}'.format(TO)}
 
         stat_df = pd.Series(stat).to_frame()
         stat_df.columns = ['Strategy']
 
-        if benchmark is not None:
+        if bench is not None:
             stat_df_b = pd.Series(stat_b).to_frame()
             stat_df = pd.concat([stat_df, stat_df_b], axis=1)
             stat_df.columns = ['Strategy', 'Benchmark']
 
-        
         return stat_df
-    
 
-    def get_default_universe(self):
-        sp500 = ['HPE', 'ICE', 'CLX', 'MAR', 'GOOGL', 'AJG', 'FTV', 'ANSS', 'INTU', 'SBUX', 'KMI', 'HAS', 'ALGN', 'F', 'NOV', 'BA', 'ECL', 'LB', 'ALK', 'RF', 'AIZ', 'CRM', 'TMO', 'XYL', 'ESS', 'CRK', 'AMD', 'MPC', 'A', 'AMCR', 'AMGN', 'JPM', 'VNO', 'T', 'VLO', 'HIG', 'PSX', 'PG', 'EBAY', 'CERN', 'ENPH', 'OXY', 'TPR', 'MSCI', 'EFX', 'NTAP', 'ANTM', 'CHRW', 'APTV', 'MU', 'BBY', 'UDR', 'JBHT', 'ARE', 'BK', 'DLTR', 'RTX', 'EXPD', 'REG', 'LOW', 'POOL', 'RE', 'HSY', 'GM', 'WMT', 'MAA', 'MCO', 'KIM', 'V', 'URI', 'MOS', 'IQV', 'D', 'LIN', 'FB', 'IP', 'PENN', 'CNC', 'PKG', 'CDW', 'FCX', 'NI', 'WDC', 'NKE', 'PNR', 'MRK', 'BEN', 'CAG', 'MCK', 'TSN', 'NEM', 'AZO', 'FOXA', 'HD', 'DAL', 'MTB', 'IVZ', 'VTR', 'LUV', 'DXCM', 'EQR', 'VRTX', 'CFG', 'MTD', 'IT', 'ADBE', 'TFC', 'FBHS', 'NSC', 'PH', 'TEL', 'HII', 'ISRG', 'NUE', 'CBRE', 'OGN', 'CE', 'PFG', 'KSU', 'MGM', 'CPRT', 'ROL', 'GIS', 'PEP', 'KHC', 'NFLX', 'RJF', 'HSIC', 'APD', 'AVGO', 'SNPS', 'FRT', 'FTNT', 'BMY', 'ROP', 'MRO', 'EL', 'LYB', 'VMC', 'CME', 'PEAK', 'XOM', 'UNP', 'CCL', 'ILMN', 'DGX', 'STX', 'TYL', 'AAL', 'ORCL', 'IEX', 'EXR', 'CCI', 'NWL', 'GOOG', 'QRVO', 'PYPL', 'CVS', 'GPN', 'FLT', 'BAC', 'CAT', 'COP', 'PLD', 'XRAY', 'DOV', 'SJM', 'TGT', 'COST', 'HCA', 'WYNN', 'MLM', 'RHI', 'NLOK', 'DHI', 'NOC', 'TRV', 'PHM', 'SRE', 'LDOS', 'PRGO', 'BSX', 'ALLE', 'AVY', 'ETR', 'WAB', 'BF.B', 'CTXS', 'EW', 'ETN', 'JCI', 'IR', 'TRMB', 'FDX', 'NDAQ', 'LW', 'FRC', 'UHS', 'EMR', 'ES', 'JNPR', 'COF', 'AES', 'ADI', 'LEG', 'BRK.B', 'APA', 'DLR', 'TDY', 'WU', 'MPWR', 'BKR', 'GWW', 'AMT', 'BKNG', 'PVH', 'TMUS', 'TSCO', 'VRSN', 'NEE', 'PPG', 'UNM', 'AKAM', 'NCLH', 'SCHW', 'HST', 'MA', 'MAS', 'HUM', 'HBAN', 'XLNX', 'NWSA', 'ALB', 'GS', 'PSA', 'LYV', 'AME', 'OTIS', 'BR', 'PPL', 'HON', 'CMG', 'AMAT', 'CNP', 'KO', 'MET', 'AIG', 'VIAC', 'AAPL', 'LKQ', 'DHR', 'HES', 'USB', 'CTL', 'XEL', 'CINF', 'COG', 'SYF', 'ZION', 'GILD', 'DVA', 'SWKS', 'CHD', 'HPQ', 'K', 'EXPE', 'PNC', 'EQIX', 'WST', 'ED', 'TJX', 'UPS', 'LVS', 'WHR', 'TER', 'GE', 'LRCX', 'WMB', 'LMT', 'ZBRA', 'RSG', 'HBI', 'MKTX', 'DRI', 'MMM', 'PCAR', 'GLW', 'DXC', 'CMI', 'INCY', 'NVR', 'ABC', 'AEP', 'WY', 'CDNS', 'CTVA', 'WRB', 'HLT', 'EOG', 'O', 'RMD', 'PM', 'DISH', 'WRK', 'SO', 'VZ', 'AAP', 'UA', 'COO', 'ATO', 'NOW', 'BDX', 'DIS', 'NTRS', 'GRMN', 'GNRC', 'DOW', 'PNW', 'MCHP', 'KEY', 'STZ', 'PWR', 'INTC', 'DISCA', 'WLTW', 'SNA', 'FE', 'AVB', 'ORLY', 'SWK', 'LEN', 'PTC', 'MHK', 'JKHY', 'VFC', 'SBAC', 'IFF', 'LLY', 'CMA', 'BXP', 'KMB', 'NVDA', 'CVX', 'CL', 'LNT', 'TFX', 'CARR', 'ITW', 'ODFL', 'OKE', 'PEG', 'KLAC', 'FMC', 'MDT', 'ROK', 'SLB', 'HRL', 'ETSY', 'AEE', 'PBCT', 'ABBV', 'RCL', 'SPGI', 'PAYX', 'DE', 'EVRG', 'AON', 'CTAS', 'SYY', 'SPG', 'NRG', 'BWA', 'NLSN', 'BLL', 'MCD', 'PFE', 'HWM', 'MYL', 'BLK', 'FOX', 'CZR', 'TT', 'STT', 'SIVB', 'APH', 'TDG', 'ABT', 'WAT', 'ADM', 'IPG', 'CMCSA', 'MKC', 'CI', 'MMC', 'AMZN', 'VRSK', 'DTE', 'YUM', 'OMC', 'CMS', 'CB', 'ALL', 'FAST', 'ROST', 'BIO', 'CAH', 'DFS', 'J', 'ACN', 'UAL', 'QCOM', 'MO', 'CPB', 'EMN', 'DISCK', 'CSCO', 'EXC', 'LHX', 'RL', 'ANET', 'STE', 'WM', 'DRE', 'IRM', 'ZTS', 'WEC', 'GPS', 'KR', 'FISV', 'PRU', 'MNST', 'LNC', 'AMP', 'ULTA', 'NXPI', 'MDLZ', 'IBM', 'FFIV', 'FIS', 'CTLT', 'PAYC', 'PXD', 'SHW', 'SEE', 'WELL', 'EIX', 'JNJ', 'EA', 'NWS', 'INFO', 'C', 'TROW', 'ATVI', 'MS', 'MRNA', 'CBOE', 'GPC', 'AWK', 'TXN', 'SYK', 'BAX', 'CSX', 'DG', 'MSFT', 'ADSK', 'DUK', 'PKI', 'DVN', 'MSI', 'TSLA', 'L', 'LH', 'TXT', 'ZBH', 'DD', 'CHTR', 'KEYS', 'FITB', 'AXP', 'HOLX', 'KMX', 'ADP', 'UAA', 'DPZ', 'IDXX', 'FANG', 'GL', 'CF', 'BIIB', 'ABMD', 'AFL', 'AOS', 'UNH', 'IPGP', 'HAL', 'MXIM', 'CTSH', 'TTWO', 'WBA', 'PGR', 'REGN', 'GD', 'TAP', 'WFC', 'TWTR']
-
-        return sp500
+    def show_sample_strategy(self):
+        tab = "    "
+        line = "class myStrategy(Strategy):\n"
+        line += tab+"def __init__(self):\n"
+        line += tab+tab+"super().__init__()\n"
+        line += "\n"
+        line += tab+"def compute_target(self, universe_list):\n"
+        line += tab+tab+"target_weight = { }\n"
+        line += tab+tab+"for ticker in universe_list:\n"
+        line += tab+tab+tab+"target_weight[ticker] = 1\n"
+        line += tab+tab+"target_weight = self.normalize(target_weight)\n"
+        line += tab+tab+"return target_weight\n"
+        line += "\n"
+        line += tab+"def custom_factor(self, ticker, ftype):\n"
+        line += tab+tab+"if ftype == 'random':\n"
+        line += tab+tab+tab+"return np.random.rand()\n"
+        line += tab+tab+"else:\n"
+        line += tab+tab+tab+"assert False\n"
+        
+        print(line)
