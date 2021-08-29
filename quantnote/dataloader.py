@@ -146,7 +146,7 @@ class DataLoader():
             except:
                 sector = 'unknown'
                 print('{} has no sector information'.format(ticker))
-            df.append({'ticker':ticker, 'permaticker':idx, 'sector':sector}, ignore_index=True)
+            df = df.append({'ticker':ticker, 'permaticker':idx, 'sector':sector}, ignore_index=True)
             ticker_to_info[ticker] = tickerinfo
 
         df = df.set_index('permaticker').sort_index().reset_index()
@@ -192,11 +192,13 @@ class DataLoader():
                 df_add['ticker'] = ticker
                 df_add = df_add.loc[:,~df_add.columns.duplicated()]
 
-                df = pd.concat([df, df_add])
+                df_add.index = pd.to_datetime(df_add.index.rename('datekey'))
+
+                df = pd.concat([df, df_add]).sort_index()
             except:
                 print('{} has no fundamental information'.format(ticker))
 
-        df.index = pd.to_datetime(df.index.rename('datekey'))
+        #df.index = pd.to_datetime(df.index.rename('datekey'))
         df = df.reset_index()
 
         return df
@@ -383,7 +385,7 @@ class DataLoader():
             'AMZN',
             'FB',
             'GOOGL',
-            'GOOG',
+            #'GOOG',
             'NVDA',
             'BRK.B',
             'TSLA',

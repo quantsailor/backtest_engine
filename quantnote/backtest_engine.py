@@ -316,8 +316,12 @@ class BacktestEngine():
         cache = {}
         for table in self.cache:
             cache[table] = {}
-            for ticker in self.cache[table]:
-                cache[table][ticker] = self.cache[table][ticker].loc[:date]
+            if table == 'tickerinfo':
+                for ticker in self.cache[table]:
+                    cache[table][ticker] = self.cache[table][ticker]
+            else:
+                for ticker in self.cache[table]:
+                    cache[table][ticker] = self.cache[table][ticker].loc[:date]
         strategy.cache = cache
         target_weight = strategy.compute_target(universe_list)
 
@@ -438,6 +442,36 @@ class BacktestEngine():
 
         return stat_df
 
+    def show_sectorflow(self, filename=None):
+        def _get_sector(ticker):
+            try:
+                sector = self.cache['tickerinfo'][ticker]['sector'].iloc[0]
+            except:
+                sector = 'Unknown'
+                
+            return sector
+
+        df = self.asset_df.copy()
+        df.columns = [_get_sector(x) for x in df.columns]
+        df = df.T.groupby(df.T.index).sum().T
+        df = df.div(df.sum(axis=1),axis=0)
+        df = df.sort_values(ascending=False, axis=1, by=df.index[-1])
+
+        fig, ax = plt.subplots()
+
+        for col in df.columns[::-1]:
+            idx = list(df.columns).index(col)
+            cols = df.columns[:idx]
+            df_cum = df[cols].sum(axis=1)
+            ax.fill_between(df_cum.index, df_cum.values)
+            
+        fig.legend(df.columns[::-1][1:], bbox_to_anchor=(0.925, 0.9), loc='upper left', borderaxespad=0.)
+        fig.autofmt_xdate()
+        fig.show()
+
+        if filename is not None:
+            fig.savefig(filename)
+
     def show_sample_strategy(self):
         tab = "    "
         line = "class myStrategy(Strategy):\n"
@@ -452,8 +486,8 @@ class BacktestEngine():
         line += tab+tab+"return target_weight\n"
         line += "\n"
         line += tab+"def custom_factor(self, ticker, ftype):\n"
-        line += tab+tab+"if ftype == 'random':\n"
-        line += tab+tab+tab+"return np.random.rand()\n"
+        line += tab+tab+"if ftype == 'marketcap':\n"
+        line += tab+tab+tab+"return self.get_value('metric',ticker,'marketcap')\n"
         line += tab+tab+"else:\n"
         line += tab+tab+tab+"assert False\n"
         
