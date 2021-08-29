@@ -20,7 +20,7 @@ def timeis(func):
 DOWNLOAD_PATH = './data'
 class DataLoader():
     def __init__(self, fred_key=None, quandl_key=None, fred_list=[], yfinance_list=[],
-        sdate=None, edate=None, size=100, db_name='./MyDB.db', is_update=False):
+        sdate=None, edate=None, size=100, db_name='MyDB.db', is_update=False):
 
         if sdate is None: sdate = '1900-01-01'
         if edate is None: edate = dt.datetime.today().strftime('%Y-%m-%d')
