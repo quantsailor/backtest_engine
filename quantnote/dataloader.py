@@ -37,7 +37,7 @@ class DataLoader():
 
         self.save_db(db_name=db_name, is_update=is_update)
 
-    def make_download_folder():
+    def make_download_folder(self):
         try:
             os.mkdir(DOWNLOAD_PATH)
         except:
