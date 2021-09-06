@@ -20,7 +20,7 @@ def timeis(func):
 DOWNLOAD_PATH = './data'
 class DataLoader():
     def __init__(self, fred_key=None, quandl_key=None, fred_list=[], yfinance_list=[],
-        sdate=None, edate=None, size=100, db_name='MyDB.db', is_update=False):
+        sdate=None, edate=None, size=100, db_name='MyDB.db', is_update=False, use_bulk=False):
 
         if sdate is None: sdate = '1900-01-01'
         if edate is None: edate = dt.datetime.today().strftime('%Y-%m-%d')
@@ -33,6 +33,7 @@ class DataLoader():
 
         print('Downloading data in {}--{}'.format(sdate.replace('-','/'), edate.replace('-','/')))
         
+        self.use_bulk = use_bulk
         self.update_data(sdate, edate, size, fred_key, quandl_key, fred_list, yfinance_list)
 
         self.save_db(db_name=db_name, is_update=is_update)
@@ -45,18 +46,23 @@ class DataLoader():
 
     @timeis
     def update_data(self, sdate, edate, size, fred_key, quandl_key, fred_list, yfinance_list):
+        if fred_key is not None:
+            self.macro_df = self.update_macro(fred_key, fred_list)
+        else:
+            self.macro_df = pd.DataFrame({'datekey':[], 'value':[], 'ticker':[]})
+        
         if quandl_key is not None:
             quandl.ApiConfig.api_key = quandl_key
             self.universe_df = self.update_universe(sdate, edate, size)
             universe = list(set(self.universe_df.ticker))
             universe = list(set(yfinance_list + universe))
+            self.market_df = self.update_market(sdate, edate, universe)
             self.ticker_df = self.update_ticker(universe)
             self.fundamental_df = self.update_fundamentals(sdate, edate, universe)
             self.metric_df = self.update_metric(sdate, edate, universe)
-            self.market_df = self.update_market(sdate, edate, universe)
 
             df_quandl = self.market_df
-            df_yf = self.update_market_yf(universe)
+            df_yf = self.update_market_yf([])
             self.market_df = pd.concat([df_quandl, df_yf]).drop_duplicates(['date','ticker'])
         else:
             self.universe_df = self.update_universe_yf(size)
@@ -67,10 +73,7 @@ class DataLoader():
             self.ticker_df, ticker_to_info = self.update_ticker_yf(universe)
             self.metric_df = self.update_metric_yf(universe, ticker_to_info)
             
-        if fred_key is not None:
-            self.macro_df = self.update_macro(fred_key, fred_list)
-        else:
-            self.macro_df = pd.DataFrame({'datekey':[], 'value':[], 'ticker':[]})
+        
 
     @timeis
     def update_universe(self, sdate, edate, size):
@@ -83,6 +86,7 @@ class DataLoader():
                 monthly_date_list.append(today.strftime('%Y-%m-%d'))
                 
         try:
+            assert self.use_bulk == False
             print('Trying API call for universe')
             df = quandl.get_table('SHARADAR/DAILY',  
                                   date = monthly_date_list, 
@@ -208,6 +212,7 @@ class DataLoader():
     @timeis
     def update_metric(self, sdate, edate, universe):
         try:
+            assert self.use_bulk == False
             print('Trying API call for metric')
             df = quandl.get_table('SHARADAR/DAILY', 
                           ticker = universe,
@@ -251,16 +256,19 @@ class DataLoader():
     @timeis
     def update_market(self, sdate, edate, universe):
         try:
+            assert self.use_bulk == False
             print('Trying API call for market')
             df = quandl.get_table('SHARADAR/SEP', 
                           ticker = universe,
                           date = {'gte':sdate, 'lte':edate}, paginate=True).set_index('date').sort_index()
         except:
-            print('Trying bulk download for market')
+            self.make_download_folder()
             filename = DOWNLOAD_PATH+'/market.zip'
+            print('Trying bulk download for market in {}'.format(filename))
             quandl.export_table('SHARADAR/SEP', 
                           ticker = universe,
                           date = {'gte':sdate, 'lte':edate}, filename=filename)
+            print('done')
             zf = zipfile.ZipFile(filename, 'r')
             zf.extractall(DOWNLOAD_PATH)
             df = pd.read_csv(DOWNLOAD_PATH+'/'+zf.namelist()[0]).set_index('date').sort_index()
@@ -269,7 +277,7 @@ class DataLoader():
 
         df = df[['date','open','high','low','closeadj','volume','ticker']]
         df.columns = ['date', 'open', 'high', 'low', 'close', 'volume', 'ticker']
-
+        df.date = pd.to_datetime(df.date)
         return df
         
     @timeis
@@ -291,19 +299,21 @@ class DataLoader():
         df = df.reset_index()
         df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'ticker']]
         df.columns = ['date', 'open', 'high', 'low', 'close', 'volume', 'ticker',]
-        
+        df.date = pd.to_datetime(df.date)
         return df
 
     @timeis
     def update_macro(self, fred_key, fred_list):
-
-        macro_list = ['CPIAUCSL', 'PCE', 'M2', 'ICSA']
+        macro_list = ['T10Y2Y']
         macro_list = set(macro_list + fred_list)
         df = None
         for ticker in macro_list:
-            df_add = self._get_PIT_df(ticker, fred_key)
-            df_add['ticker'] = [ticker for _ in df_add.index]
-            df = pd.concat([df, df_add],axis=0)
+            try:
+                df_add = self._get_PIT_df(ticker, fred_key)
+                df_add['ticker'] = [ticker for _ in df_add.index]
+                df = pd.concat([df, df_add],axis=0)
+            except:
+                print('{} is not retrieved from ALFRED'.format(ticker))
 
         df = df.reset_index()        
         return df
@@ -350,13 +360,32 @@ class DataLoader():
         db = sqlite3.connect(db_name)
 
         if_exists = 'append' if is_update else 'replace'
-        self.universe_df.to_sql(name='universe', con=db, if_exists=if_exists, index=False)
-        self.ticker_df.to_sql(name='ticker', con=db, if_exists=if_exists, index=False)
-        self.fundamental_df.to_sql(name='fundamentals', con=db, if_exists=if_exists, index=False)
-        self.metric_df.to_sql(name='metric', con=db, if_exists=if_exists, index=False)
-        self.market_df.to_sql(name='market', con=db, if_exists=if_exists, index=False)
-        self.macro_df.to_sql(name='macro', con=db, if_exists=if_exists, index=False)
-
+        try:
+            self.universe_df.to_sql(name='universe', con=db, if_exists=if_exists, index=False)
+        except:
+            print('Universe is not saved')
+        try:
+            self.ticker_df.to_sql(name='ticker', con=db, if_exists=if_exists, index=False)
+        except:
+            print('Ticker is not saved')
+        try:
+            self.fundamental_df.to_sql(name='fundamentals', con=db, if_exists=if_exists, index=False)
+        except:
+            print('Fundamental is not saved')
+        try:
+            self.metric_df.to_sql(name='metric', con=db, if_exists=if_exists, index=False)
+        except:
+            print('Metric is not saved')
+        try:
+            self.market_df.to_sql(name='market', con=db, if_exists=if_exists, index=False)
+        except:
+            print('Market is not saved')
+        try:
+            self.macro_df.to_sql(name='macro', con=db, if_exists=if_exists, index=False)
+        except:
+            print('Macro is not saved')
+        
+        
         if is_update:
             def drop_duplicates(table, subset):
                 qry = 'SELECT * FROM {}'.format(table)
@@ -371,10 +400,13 @@ class DataLoader():
             drop_duplicates('market', ['ticker', 'date'])
             drop_duplicates('macro', ['ticker', 'datekey'])
 
-        date_list = pd.read_sql('SELECT * FROM market', db).date.sort_values().unique()
+        try:
+            date_list = pd.read_sql('SELECT * FROM market', db).date.sort_values().unique()
 
-        print('DB has data from {} to {}'.format(
-            date_list[0], date_list[-1]))
+            print('DB has data from {} to {}'.format(
+                date_list[0], date_list[-1]))
+        except:
+            pass
 
         db.close()
         

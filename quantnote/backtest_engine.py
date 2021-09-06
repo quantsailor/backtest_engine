@@ -72,7 +72,7 @@ class BacktestEngine():
             msg = 'SELECT * FROM macro'
             df = pd.read_sql(msg,db).set_index('datekey')
             df.index = pd.to_datetime(df.index)
-            df['value'] = pd.to_numeric(df['value'])
+            df['value'] = pd.to_numeric(df['value'], errors='coerce')
             df['cdate'] = pd.to_datetime(df['cdate'])
             macro_df = df.copy().sort_index()
         except:
