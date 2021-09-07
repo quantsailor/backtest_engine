@@ -64,6 +64,7 @@ class BacktestEngine():
             macro_df = df.copy().sort_index()
         except:
             self.cache['macro'] = {}
+            macro_df = pd.DataFrame({'datekey':[], 'value':[], 'ticker':[]})
             print('FRED data does not exsit')
 
         
@@ -78,7 +79,7 @@ class BacktestEngine():
 
         self.cache['universe'] = universe_df
         self.cache['macro'] = dict(tuple(macro_df.groupby('ticker'))) #divide_by_ticker(macro_df, None)
-        self.cache['ticker'] = dict(tuple(ticker_df.groupby('ticker'))) #divide_by_ticker(ticker_df, None)
+        self.cache['tickerinfo'] = dict(tuple(ticker_df.groupby('ticker'))) #divide_by_ticker(ticker_df, None)
         self.cache['fundamentals'] = dict(tuple(fundamental_df.groupby('ticker'))) #divide_by_ticker(fundamental_df, None)
         self.cache['metric'] = dict(tuple(metric_df.groupby('ticker'))) #divide_by_ticker(metric_df, None)
         self.cache['market'] = dict(tuple(market_df.groupby('ticker'))) #divide_by_ticker(market_df, None)
@@ -295,10 +296,10 @@ class BacktestEngine():
         cache = {}
         for table in self.cache:
             cache[table] = {}
-            if table == 'tickerinfo':
+            if table in ['tickerinfo']:
                 for ticker in self.cache[table]:
                     cache[table][ticker] = self.cache[table][ticker]
-            else:
+            elif table not in ['universe']:
                 for ticker in self.cache[table]:
                     cache[table][ticker] = self.cache[table][ticker].loc[:date]
         strategy.cache = cache
