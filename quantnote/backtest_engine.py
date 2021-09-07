@@ -16,13 +16,13 @@ def timeis(func):
 
 
 class BacktestEngine():
-    def __init__(self, db_name=None, num_process=4):
+    def __init__(self, db_name=None):
         self.db = db_name
         self.cache = {}
-        self.initialize(num_process)
+        self.initialize()
         
     @timeis
-    def initialize(self, num_process):
+    def initialize(self):
         print('Loading DB...')
         stime = time.time()
 
@@ -36,17 +36,17 @@ class BacktestEngine():
 
             msg = 'SELECT * FROM ticker'
             df = pd.read_sql(msg,db).set_index('permaticker')
-            ticker_df = df.copy().sort_values('ticker')#.sort_index()
+            ticker_df = df.copy().sort_index()
 
             msg = 'SELECT * FROM fundamentals'
             df = pd.read_sql(msg,db).set_index('datekey')
             df.index = pd.to_datetime(df.index)
-            fundamental_df = df.copy().sort_values('ticker')#.sort_index()
+            fundamental_df = df.copy().sort_index()
 
             msg = 'SELECT * FROM metric'
             df = pd.read_sql(msg,db).set_index('date')
             df.index = pd.to_datetime(df.index)
-            metric_df = df.copy().sort_values('ticker')#.sort_index()
+            metric_df = df.copy().sort_index()
 
         except:
             self.cache['universe'] = {}
@@ -61,7 +61,7 @@ class BacktestEngine():
             df.index = pd.to_datetime(df.index)
             df['value'] = pd.to_numeric(df['value'], errors='coerce')
             df['cdate'] = pd.to_datetime(df['cdate'])
-            macro_df = df.copy().sort_values('ticker')#.sort_index()
+            macro_df = df.copy().sort_index()
         except:
             self.cache['macro'] = {}
             print('FRED data does not exsit')
@@ -70,7 +70,7 @@ class BacktestEngine():
         msg = 'SELECT * FROM market'
         df = pd.read_sql(msg,db).set_index('date')
         df.index = pd.to_datetime(df.index)
-        market_df = df.copy().sort_values('ticker')#.sort_index()
+        market_df = df.copy().sort_index()
 
         db.close
         etime = time.time()
