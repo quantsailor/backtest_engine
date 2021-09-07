@@ -3,8 +3,6 @@ import pandas_market_calendars as mcal
 import numpy as np
 import sqlite3
 import time
-import multiprocessing
-from itertools import product
 import matplotlib.pyplot as plt
 
 def timeis(func):  
@@ -16,17 +14,6 @@ def timeis(func):
         return result
     return wrap
 
-def query_df(df, ticker):
-    return df[df.ticker.values == ticker]
-           
-def divide_by_ticker(df, pool):
-    if pool is not None:
-        keys = list(set(df.ticker))
-        values = pool.starmap(query_df, product([df],keys))
-        return dict(zip(keys, values))
-    else:
-        return {ticker:df[df.ticker.values == ticker] for ticker in set(df.ticker)}
-    
 
 class BacktestEngine():
     def __init__(self, db_name=None, num_process=4):
@@ -49,17 +36,17 @@ class BacktestEngine():
 
             msg = 'SELECT * FROM ticker'
             df = pd.read_sql(msg,db).set_index('permaticker')
-            ticker_df = df.copy().sort_index()
+            ticker_df = df.copy().sort_values('ticker')#.sort_index()
 
             msg = 'SELECT * FROM fundamentals'
             df = pd.read_sql(msg,db).set_index('datekey')
             df.index = pd.to_datetime(df.index)
-            fundamental_df = df.copy().sort_index()
+            fundamental_df = df.copy().sort_values('ticker')#.sort_index()
 
             msg = 'SELECT * FROM metric'
             df = pd.read_sql(msg,db).set_index('date')
             df.index = pd.to_datetime(df.index)
-            metric_df = df.copy().sort_index()
+            metric_df = df.copy().sort_values('ticker')#.sort_index()
 
         except:
             self.cache['universe'] = {}
@@ -74,7 +61,7 @@ class BacktestEngine():
             df.index = pd.to_datetime(df.index)
             df['value'] = pd.to_numeric(df['value'], errors='coerce')
             df['cdate'] = pd.to_datetime(df['cdate'])
-            macro_df = df.copy().sort_index()
+            macro_df = df.copy().sort_values('ticker')#.sort_index()
         except:
             self.cache['macro'] = {}
             print('FRED data does not exsit')
@@ -83,27 +70,19 @@ class BacktestEngine():
         msg = 'SELECT * FROM market'
         df = pd.read_sql(msg,db).set_index('date')
         df.index = pd.to_datetime(df.index)
-        market_df = df.copy().sort_index()
+        market_df = df.copy().sort_values('ticker')#.sort_index()
 
         db.close
         etime = time.time()
         print('DB loaded in {:.2f} seconds'.format(etime-stime))
-        
-        pool = multiprocessing.Pool(num_process)
 
-        try:
-            self.cache['macro'] = divide_by_ticker(macro_df, None)
-        except:
-            pass
-        try:
-            self.cache['universe'] = universe_df
-            self.cache['tickerinfo'] = divide_by_ticker(ticker_df, None)
-            self.cache['fundamentals'] = divide_by_ticker(fundamental_df, None)
-            self.cache['metric'] = divide_by_ticker(metric_df, pool)
-            self.cache['market'] = divide_by_ticker(market_df, pool)
-        except:
-            pass
-        pool.close()
+        self.cache['universe'] = universe_df
+        self.cache['macro'] = dict(tuple(macro_df.groupby('ticker'))) #divide_by_ticker(macro_df, None)
+        self.cache['ticker'] = dict(tuple(ticker_df.groupby('ticker'))) #divide_by_ticker(ticker_df, None)
+        self.cache['fundamentals'] = dict(tuple(fundamental_df.groupby('ticker'))) #divide_by_ticker(fundamental_df, None)
+        self.cache['metric'] = dict(tuple(metric_df.groupby('ticker'))) #divide_by_ticker(metric_df, None)
+        self.cache['market'] = dict(tuple(market_df.groupby('ticker'))) #divide_by_ticker(market_df, None)
+        
         
     def get_universe(self, date):
         if self.custom_universe is not None:
