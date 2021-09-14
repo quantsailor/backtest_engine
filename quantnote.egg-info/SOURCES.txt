@@ -1,0 +1,11 @@
+LICENSE
+README.md
+setup.py
+quantnote/__init__.py
+quantnote/backtest_engine.py
+quantnote/dataloader.py
+quantnote/strategy.py
+quantnote.egg-info/PKG-INFO
+quantnote.egg-info/SOURCES.txt
+quantnote.egg-info/dependency_links.txt
+quantnote.egg-info/top_level.txt
